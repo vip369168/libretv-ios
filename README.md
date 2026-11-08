@@ -54,13 +54,15 @@
 
 **本机已有的东西**：`ios/` 原生工程、共享 scheme、ATS 配置都已生成并提交在仓库里，推上去就能编译。
 
+本地仓库**已经初始化并提交完毕**（分支 `main`，35 个文件，`node_modules` 与 `ios/App/App/public` 已被忽略）。你只需要建远程仓库再推一次：
+
 ```bash
 cd libretv-ios
-git init && git add . && git commit -m "LibreTV iOS player"
-git branch -M main
 git remote add origin https://github.com/<你的账号>/<仓库名>.git
 git push -u origin main
 ```
+
+推送的瞬间 CI 就会自动开跑（工作流同时挂了 `push: main` 和手动触发），不必再去点按钮。
 
 然后到 GitHub 的 Actions 页面手动跑一次 `Build unsigned iOS IPA`，完成后在 Artifacts 里下载 `LibreTV-unsigned-ipa`。
 
