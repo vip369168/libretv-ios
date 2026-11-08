@@ -1,0 +1,565 @@
+/*
+ * LibreTV iOS — 内置播放源的原生播放器前端
+ * 纯静态实现，无打包工具。原生网络由 CapacitorHttp 接管，因此不受跨域限制。
+ */
+(function () {
+  'use strict';
+
+  var LS_SOURCES = 'libretv.sources.v1';
+  var LS_PROGRESS = 'libretv.progress.v1';
+
+  var el = function (id) { return document.getElementById(id); };
+
+  var state = {
+    sources: [],
+    activeSource: 'all',
+    results: [],
+    detail: null,
+    groups: [],
+    groupIndex: 0,
+    episode: null,
+    view: 'home'
+  };
+
+  /* ---------- 原生桥 ---------- */
+
+  function nativeHttp() {
+    var cap = window.Capacitor;
+    if (!cap || !cap.Plugins) return null;
+    var http = cap.Plugins.CapacitorHttp;
+    return (http && typeof http.get === 'function') ? http : null;
+  }
+
+  function getJson(url) {
+    var http = nativeHttp();
+    if (http) {
+      return http.get({
+        url: url,
+        headers: { 'Accept': 'application/json, text/plain, */*' },
+        connectTimeout: 10000,
+        readTimeout: 20000
+      }).then(function (res) {
+        if (res.status >= 400) throw new Error('HTTP ' + res.status);
+        var d = res.data;
+        if (typeof d === 'string') {
+          try { return JSON.parse(d); } catch (e) { throw new Error('返回内容不是 JSON'); }
+        }
+        return d;
+      });
+    }
+    return fetch(url, { headers: { 'Accept': 'application/json, text/plain, */*' } })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.text();
+      })
+      .then(function (text) {
+        try { return JSON.parse(text); } catch (e) { throw new Error('返回内容不是 JSON'); }
+      });
+  }
+
+  /* ---------- 存储 ---------- */
+
+  function readStore(key, fallback) {
+    try {
+      var raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (e) { return fallback; }
+  }
+
+  function writeStore(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* 配额满时忽略 */ }
+  }
+
+  function normalizeSource(s) {
+    return {
+      id: s.id || ('s' + Math.random().toString(36).slice(2, 9)),
+      name: String(s.name || '未命名源').trim(),
+      api: String(s.api || '').trim(),
+      enabled: s.enabled !== false
+    };
+  }
+
+  function persistSources() { writeStore(LS_SOURCES, state.sources); }
+
+  function loadSources() {
+    var saved = readStore(LS_SOURCES, null);
+    if (saved && saved.length) {
+      state.sources = saved.map(normalizeSource);
+      return Promise.resolve();
+    }
+    return fetch('sources.json')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        state.sources = (data.sources || []).map(normalizeSource);
+        persistSources();
+      })
+      .catch(function () { state.sources = []; });
+  }
+
+  /* ---------- 提示 ---------- */
+
+  var toastTimer = null;
+  function toast(msg, ms) {
+    var t = el('toast');
+    t.textContent = msg;
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.hidden = true; }, ms || 2200);
+  }
+
+  /* ---------- 视图 ---------- */
+
+  function show(view) {
+    if (state.view === 'player' && view !== 'player') {
+      var v = el('video');
+      v.pause();
+      v.removeAttribute('src');
+      v.load();
+    }
+    state.view = view;
+    ['home', 'detail', 'player', 'sources'].forEach(function (name) {
+      el('view-' + name).hidden = (name !== view);
+    });
+    el('btn-back').hidden = (view === 'home');
+    el('btn-settings').textContent = (view === 'sources') ? '完成' : '源';
+    el('topbar-title').textContent = {
+      home: 'LibreTV', detail: '详情', player: '播放', sources: '播放源'
+    }[view];
+    window.scrollTo(0, 0);
+  }
+
+  function goHome() {
+    show('home');
+    renderChips();
+  }
+
+  /* ---------- 搜索 ---------- */
+
+  function enabledSources() {
+    return state.sources.filter(function (s) { return s.enabled && s.api; });
+  }
+
+  function sourceUrl(api, keyword) {
+    return api.replace(/\/+$/, '') + '/?ac=videolist&wd=' + encodeURIComponent(keyword) + '&pg=1';
+  }
+
+  function searchOne(src, keyword) {
+    return getJson(sourceUrl(src.api, keyword)).then(function (data) {
+      var list = (data && (data.list || data.data)) || [];
+      if (!Array.isArray(list)) return [];
+      return list.map(function (it) {
+        return {
+          sourceId: src.id,
+          sourceName: src.name,
+          id: String(it.vod_id == null ? '' : it.vod_id),
+          name: String(it.vod_name || '').trim(),
+          pic: it.vod_pic || '',
+          remarks: it.vod_remarks || '',
+          year: it.vod_year || '',
+          area: it.vod_area || '',
+          type: it.vod_type_name || it.vod_class || '',
+          raw: it
+        };
+      }).filter(function (x) { return x.name; });
+    });
+  }
+
+  function runSearch(keyword) {
+    var pool = enabledSources();
+    if (!pool.length) {
+      toast('还没有可用的源');
+      renderSources();
+      show('sources');
+      return;
+    }
+    var targets = state.activeSource === 'all'
+      ? pool
+      : pool.filter(function (s) { return s.id === state.activeSource; });
+
+    el('results').innerHTML = '';
+    el('home-hint').hidden = false;
+    el('home-hint').textContent = '正在 ' + targets.length + ' 个源中搜索「' + keyword + '」…';
+
+    Promise.all(targets.map(function (src) {
+      return searchOne(src, keyword).then(
+        function (items) { return { ok: true, items: items }; },
+        function (err) { return { ok: false, error: err }; }
+      );
+    })).then(function (report) {
+      var failed = report.filter(function (r) { return !r.ok; }).length;
+      var merged = [];
+      report.forEach(function (r) { if (r.ok) merged = merged.concat(r.items); });
+
+      state.results = merged;
+      renderResults(merged);
+
+      if (!merged.length) {
+        el('home-hint').textContent = failed
+          ? '没有结果，其中 ' + failed + ' 个源请求失败'
+          : '没有找到相关影片，换个关键词试试';
+      } else {
+        el('home-hint').textContent = '共 ' + merged.length + ' 条结果'
+          + (failed ? '，' + failed + ' 个源请求失败' : '');
+      }
+    });
+  }
+
+  var BLANK_POSTER = 'data:image/svg+xml;charset=utf-8,'
+    + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="180"><rect width="120" height="180" fill="#1b2430"/></svg>');
+
+  function renderResults(items) {
+    var box = el('results');
+    box.innerHTML = '';
+    items.forEach(function (item) {
+      var card = document.createElement('div');
+      card.className = 'card';
+
+      var img = document.createElement('img');
+      img.loading = 'lazy';
+      img.alt = item.name;
+      img.src = item.pic || BLANK_POSTER;
+      img.addEventListener('error', function () { img.src = BLANK_POSTER; });
+
+      var name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = item.name;
+
+      card.appendChild(img);
+      card.appendChild(name);
+
+      if (item.remarks) {
+        var b = document.createElement('div');
+        b.className = 'badge';
+        b.textContent = item.remarks;
+        card.appendChild(b);
+      }
+
+      card.addEventListener('click', function () { openDetail(item); });
+      box.appendChild(card);
+    });
+  }
+
+  /* ---------- 详情 ---------- */
+
+  function parseGroups(raw) {
+    var froms = String(raw.vod_play_from || '').split('$$$');
+    var blocks = String(raw.vod_play_url || '').split('$$$');
+    var groups = [];
+
+    blocks.forEach(function (block, i) {
+      if (!block) return;
+      var eps = block.split('#').filter(Boolean).map(function (seg) {
+        var cut = seg.indexOf('$');
+        var label = cut < 0 ? '播放' : seg.slice(0, cut);
+        var url = cut < 0 ? seg : seg.slice(cut + 1);
+        return { name: label.trim() || '播放', url: url.trim() };
+      }).filter(function (e) { return /^https?:\/\//i.test(e.url); });
+
+      if (eps.length) {
+        groups.push({ from: (froms[i] || ('线路 ' + (i + 1))).trim(), episodes: eps });
+      }
+    });
+
+    return groups;
+  }
+
+  function openDetail(item) {
+    state.detail = item;
+    state.groups = parseGroups(item.raw || {});
+    state.groupIndex = 0;
+
+    el('d-title').textContent = item.name;
+    el('d-poster').src = item.pic || BLANK_POSTER;
+
+    var meta = [item.year, item.area, item.type].filter(Boolean).join(' · ');
+    el('d-sub').textContent = meta || '暂无信息';
+    el('d-from').textContent = '来自 ' + item.sourceName;
+
+    show('detail');
+
+    if (!state.groups.length) {
+      el('d-tabs').innerHTML = '';
+      el('d-episodes').innerHTML = '';
+      el('d-note').hidden = false;
+      el('d-note').textContent = '这个条目没有可直接播放的地址。部分源需要先请求详情接口，换一个源通常能解决。';
+      return;
+    }
+    el('d-note').hidden = true;
+    renderDetailGroups();
+  }
+
+  function renderDetailGroups() {
+    var tabs = el('d-tabs');
+    tabs.innerHTML = '';
+    if (state.groups.length > 1) {
+      state.groups.forEach(function (g, i) {
+        var chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip' + (i === state.groupIndex ? ' on' : '');
+        chip.textContent = g.from;
+        chip.addEventListener('click', function () {
+          state.groupIndex = i;
+          renderDetailGroups();
+        });
+        tabs.appendChild(chip);
+      });
+    }
+
+    var box = el('d-episodes');
+    box.innerHTML = '';
+    state.groups[state.groupIndex].episodes.forEach(function (ep) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ep';
+      b.textContent = ep.name;
+      b.addEventListener('click', function () { playEpisode(ep); });
+      box.appendChild(b);
+    });
+  }
+
+  /* ---------- 播放 ---------- */
+
+  function progressMap() { return readStore(LS_PROGRESS, {}); }
+
+  function saveProgress(url, time) {
+    if (!url || !time || time < 5) return;
+    var map = progressMap();
+    map[url] = Math.floor(time);
+    writeStore(LS_PROGRESS, map);
+  }
+
+  function playEpisode(ep) {
+    var group = state.groups[state.groupIndex];
+    state.episode = ep;
+
+    var v = el('video');
+    el('p-title').textContent = state.detail ? (state.detail.name + ' · ' + ep.name) : ep.name;
+    el('p-status').textContent = '线路：' + (group ? group.from : '默认');
+
+    show('player');
+    v.src = ep.url;
+    v.load();
+
+    var saved = progressMap()[ep.url];
+    var onMeta = function () {
+      v.removeEventListener('loadedmetadata', onMeta);
+      if (saved && saved > 5 && (!isFinite(v.duration) || saved < v.duration - 10)) {
+        v.currentTime = saved;
+        toast('已从上次位置继续播放', 1600);
+      }
+      var p = v.play();
+      if (p && p.catch) p.catch(function () { /* 需要用户手势，忽略 */ });
+    };
+    v.addEventListener('loadedmetadata', onMeta);
+
+    renderPlayerEpisodes();
+  }
+
+  function renderPlayerEpisodes() {
+    var box = el('p-episodes');
+    box.innerHTML = '';
+    var group = state.groups[state.groupIndex];
+    if (!group) return;
+    group.episodes.forEach(function (ep) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ep' + (state.episode && state.episode.url === ep.url ? ' on' : '');
+      b.textContent = ep.name;
+      b.addEventListener('click', function () { playEpisode(ep); });
+      box.appendChild(b);
+    });
+  }
+
+  /* ---------- 源管理 ---------- */
+
+  function renderSources() {
+    var box = el('source-list');
+    box.innerHTML = '';
+
+    if (!state.sources.length) {
+      var empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = '还没有任何源。在下面填名称和接口地址即可添加。';
+      box.appendChild(empty);
+    }
+
+    state.sources.forEach(function (src) {
+      var row = document.createElement('div');
+      row.className = 'source-item';
+
+      var info = document.createElement('div');
+      info.className = 'info';
+      var n = document.createElement('div');
+      n.className = 'n';
+      n.textContent = src.name;
+      var a = document.createElement('div');
+      a.className = 'a';
+      a.textContent = src.api;
+      info.appendChild(n);
+      info.appendChild(a);
+
+      var sw = document.createElement('button');
+      sw.type = 'button';
+      sw.className = 'switch' + (src.enabled ? ' on' : '');
+      sw.setAttribute('aria-label', '启用或停用');
+      sw.addEventListener('click', function () {
+        src.enabled = !src.enabled;
+        persistSources();
+        renderSources();
+        renderChips();
+      });
+
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'del';
+      del.textContent = '删除';
+      del.addEventListener('click', function () {
+        state.sources = state.sources.filter(function (s) { return s.id !== src.id; });
+        if (state.activeSource === src.id) state.activeSource = 'all';
+        persistSources();
+        renderSources();
+        renderChips();
+      });
+
+      row.appendChild(info);
+      row.appendChild(sw);
+      row.appendChild(del);
+      box.appendChild(row);
+    });
+
+    el('env-info').textContent = nativeHttp()
+      ? '原生网络已接管：请求不受跨域限制，可直接访问第三方接口。'
+      : '当前为浏览器模式（无原生网络），跨域接口可能请求失败。';
+  }
+
+  function renderChips() {
+    var box = el('chips');
+    box.innerHTML = '';
+    var pool = enabledSources();
+    if (pool.length < 2) { box.hidden = true; return; }
+    box.hidden = false;
+
+    var all = document.createElement('button');
+    all.type = 'button';
+    all.className = 'chip' + (state.activeSource === 'all' ? ' on' : '');
+    all.textContent = '全部源';
+    all.addEventListener('click', function () {
+      state.activeSource = 'all';
+      renderChips();
+    });
+    box.appendChild(all);
+
+    pool.forEach(function (src) {
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (state.activeSource === src.id ? ' on' : '');
+      chip.textContent = src.name;
+      chip.addEventListener('click', function () {
+        state.activeSource = src.id;
+        renderChips();
+      });
+      box.appendChild(chip);
+    });
+  }
+
+  /* ---------- 事件 ---------- */
+
+  function bind() {
+    el('search-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var kw = el('q').value.trim();
+      if (!kw) { toast('先输入关键词'); return; }
+      if (state.view !== 'home') show('home');
+      runSearch(kw);
+    });
+
+    el('btn-settings').addEventListener('click', function () {
+      if (state.view === 'sources') {
+        goHome();
+      } else {
+        renderSources();
+        show('sources');
+      }
+    });
+
+    el('btn-back').addEventListener('click', function () {
+      if (state.view === 'player') { show('detail'); return; }
+      if (state.view === 'detail') { goHome(); return; }
+      goHome();
+    });
+
+    el('source-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var name = el('s-name').value.trim();
+      var api = el('s-api').value.trim();
+      if (!name || !api) { toast('名称和接口地址都要填'); return; }
+      if (!/^https?:\/\//i.test(api)) { toast('接口地址要以 http:// 或 https:// 开头'); return; }
+      state.sources.push(normalizeSource({ name: name, api: api }));
+      persistSources();
+      el('s-name').value = '';
+      el('s-api').value = '';
+      renderSources();
+      renderChips();
+      toast('已添加');
+    });
+
+    el('btn-import').addEventListener('click', function () {
+      var text = el('s-json').value.trim();
+      if (!text) { toast('先把 JSON 粘贴到框里'); return; }
+      var parsed;
+      try { parsed = JSON.parse(text); } catch (e) { toast('JSON 格式有误'); return; }
+      if (!Array.isArray(parsed)) { toast('需要一个数组'); return; }
+      var added = 0;
+      parsed.forEach(function (item) {
+        if (!item || !item.name || !item.api) return;
+        state.sources.push(normalizeSource(item));
+        added += 1;
+      });
+      persistSources();
+      el('s-json').value = '';
+      renderSources();
+      renderChips();
+      toast('导入 ' + added + ' 个源');
+    });
+
+    el('btn-export').addEventListener('click', function () {
+      var list = state.sources.map(function (s) {
+        return { name: s.name, api: s.api, enabled: s.enabled };
+      });
+      el('s-json').value = JSON.stringify(list, null, 2);
+      toast('已导出到上方文本框，可长按复制');
+    });
+
+    var v = el('video');
+    var lastSave = 0;
+    v.addEventListener('timeupdate', function () {
+      var now = Date.now();
+      if (now - lastSave < 5000) return;
+      lastSave = now;
+      if (state.episode && v.currentTime > 0) saveProgress(state.episode.url, v.currentTime);
+    });
+    v.addEventListener('error', function () {
+      el('p-status').textContent = '这条线路播放失败，可能是防盗链或链接已失效，换一条线路试试。';
+    });
+    v.addEventListener('ended', function () {
+      if (state.episode) saveProgress(state.episode.url, 0);
+    });
+  }
+
+  /* ---------- 启动 ---------- */
+
+  function boot() {
+    bind();
+    loadSources().then(function () {
+      renderChips();
+      renderSources();
+      show('home');
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();

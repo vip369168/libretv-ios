@@ -1,0 +1,104 @@
+name: Build unsigned iOS IPA
+
+# 在 GitHub 的 macOS 26 运行器上编译，产出未签名 .ipa。
+# 未签名包不能用文件管理器安装，必须用 AltStore / SideStore / Sideloadly 重签名后装机。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-ipa:
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 打印工具链版本
+        run: |
+          xcodebuild -version
+          node -v
+          pod --version || echo "CocoaPods 未预装"
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 生成 iOS 工程（仓库里没有时）
+        run: |
+          if [ -d ios/App ]; then
+            echo "已存在 ios/App，跳过 cap add"
+          else
+            npx cap add ios
+          fi
+
+      - name: 同步 Web 资源
+        run: npx cap sync ios
+
+      - name: 放开 ATS（允许 http 媒体加载）
+        run: |
+          set -euo pipefail
+          PLIST="ios/App/App/Info.plist"
+          for KEY in NSAllowsArbitraryLoads NSAllowsArbitraryLoadsInWebContent NSAllowsArbitraryLoadsForMedia; do
+            /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity:$KEY" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:$KEY bool true" "$PLIST"
+          done
+          plutil -p "$PLIST" | grep -A4 NSAppTransportSecurity
+
+      - name: 关闭代码签名
+        run: python3 scripts/disable_signing.py ios/App/App.xcodeproj/project.pbxproj
+
+      - name: 解析 Swift Package 依赖
+        run: |
+          set -euo pipefail
+          if [ -d ios/App/App.xcworkspace ]; then
+            echo "CocoaPods 工程，跳过 SPM 解析"
+          else
+            xcodebuild -project ios/App/App.xcodeproj -scheme App -resolvePackageDependencies
+          fi
+
+      - name: 编译并归档
+        run: |
+          set -euo pipefail
+          if [ -d ios/App/App.xcworkspace ]; then
+            TARGET="-workspace ios/App/App.xcworkspace"
+          else
+            TARGET="-project ios/App/App.xcodeproj"
+          fi
+          xcodebuild ${TARGET} \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "${PWD}/build/LibreTV.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            archive
+
+      - name: 打包成 IPA
+        run: |
+          set -euo pipefail
+          APP="build/LibreTV.xcarchive/Products/Applications/App.app"
+          test -d "${APP}"
+          mkdir -p build/Payload
+          cp -R "${APP}" build/Payload/
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent Payload LibreTV-unsigned.ipa
+          ls -lh LibreTV-unsigned.ipa
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: LibreTV-unsigned-ipa
+          path: build/LibreTV-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,15 @@
+# 统一以 LF 入库：工程在 Windows 上生成，但要在 macOS 上编译。
+# 若 Xcode 工程文件带 CRLF，pbxproj / xcscheme 偶发解析异常。
+* text=auto eol=lf
+
+*.pbxproj   text eol=lf
+*.xcscheme  text eol=lf
+*.plist     text eol=lf
+*.storyboard text eol=lf
+*.swift     text eol=lf
+*.py        text eol=lf
+*.sh        text eol=lf
+
+*.png  binary
+*.ipa  binary
+*.xcarchive binary

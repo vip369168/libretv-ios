@@ -1,0 +1,13 @@
+{
+  "appId": "com.yourname.libretv",
+  "appName": "LibreTV",
+  "webDir": "www",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  },
+  "ios": {
+    "backgroundColor": "#0b0f14"
+  }
+}

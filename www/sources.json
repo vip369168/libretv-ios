@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "note": "App 首次启动时会读取这个文件作为初始源列表。示例条目是占位地址，默认停用，请替换成你自己的接口后重新构建。",
+  "sources": [
+    {
+      "id": "demo",
+      "name": "示例源（占位，未启用）",
+      "api": "https://example.com/api.php/provide/vod/",
+      "enabled": false
+    }
+  ]
+}

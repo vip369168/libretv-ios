@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="color-scheme" content="dark" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>LibreTV</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header id="topbar">
+  <button id="btn-back" class="icon-btn" hidden aria-label="返回">‹</button>
+  <div id="topbar-title">LibreTV</div>
+  <button id="btn-settings" class="icon-btn" aria-label="播放源">源</button>
+</header>
+
+<main>
+
+  <section id="view-home">
+    <form id="search-form" autocomplete="off">
+      <input id="q" type="search" placeholder="搜索电影、剧集、演员" enterkeyhint="search" />
+      <button type="submit" id="btn-search">搜索</button>
+    </form>
+
+    <div id="chips" class="chips"></div>
+
+    <div id="home-hint" class="hint">输入关键词后，会同时在所有已启用的源里检索</div>
+    <div id="results" class="grid"></div>
+  </section>
+
+  <section id="view-detail" hidden>
+    <div class="detail-head">
+      <img id="d-poster" class="poster" alt="" />
+      <div class="detail-meta">
+        <h1 id="d-title"></h1>
+        <div id="d-sub" class="sub"></div>
+        <div id="d-from" class="from"></div>
+      </div>
+    </div>
+    <div id="d-tabs" class="tabs"></div>
+    <div id="d-episodes" class="episodes"></div>
+    <p id="d-note" class="hint" hidden></p>
+  </section>
+
+  <section id="view-player" hidden>
+    <div class="player-wrap">
+      <video id="video" controls playsinline webkit-playsinline preload="metadata"></video>
+    </div>
+    <div class="player-bar">
+      <div id="p-title" class="p-title"></div>
+      <div id="p-status" class="hint"></div>
+    </div>
+    <div id="p-episodes" class="episodes"></div>
+  </section>
+
+  <section id="view-sources" hidden>
+    <h2 class="h2">已安装的播放源</h2>
+    <div id="source-list" class="source-list"></div>
+
+    <h2 class="h2">添加源</h2>
+    <form id="source-form" class="stack">
+      <input id="s-name" type="text" placeholder="源名称，例如「我的源 A」" />
+      <input id="s-api" type="url" inputmode="url" placeholder="接口地址，例如 https://example.com/api.php/provide/vod/" />
+      <button type="submit">添加</button>
+    </form>
+
+    <h2 class="h2">批量导入 / 导出</h2>
+    <textarea id="s-json" rows="5" spellcheck="false" placeholder='[{"name":"源 A","api":"https://example.com/api.php/provide/vod/"}]'></textarea>
+    <div class="row">
+      <button id="btn-import" type="button">导入 JSON</button>
+      <button id="btn-export" type="button" class="ghost">导出当前列表</button>
+    </div>
+
+    <div id="env-info" class="hint"></div>
+  </section>
+
+</main>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
