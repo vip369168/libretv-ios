@@ -1,5 +1,5 @@
 {
-  "appId": "com.yourname.libretv",
+  "appId": "com.libretv.player",
   "appName": "LibreTV",
   "webDir": "www",
   "plugins": {

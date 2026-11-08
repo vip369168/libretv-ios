@@ -117,8 +117,11 @@ libretv-ios/
 └─ .github/workflows/ios-unsigned.yml
 ```
 
-改应用名：`capacitor.config.json` 的 `appName` 与 `ios/App/App/Info.plist` 的 `CFBundleDisplayName`。
-改 Bundle ID：`capacitor.config.json` 的 `appId`（侧载工具会沿用它，建议改成你自己的反向域名）。
+**当前标识**：显示名与内部名都是 `LibreTV`，Bundle ID 是 `com.libretv.player`。
+
+改应用名要同步改三处：`capacitor.config.json` 的 `appName`、`Info.plist` 的 `CFBundleDisplayName` 与 `CFBundleName`（后者不显示在桌面，但会出现在「设置」列表和系统弹窗里，保持 `$(PRODUCT_NAME)` 会显示成 `App`）。改完跑一次 `npx cap sync ios`。
+
+改 Bundle ID：`capacitor.config.json` 的 `appId` 加 `project.pbxproj` 里两处 `PRODUCT_BUNDLE_IDENTIFIER`。**装了之后再改会导致覆盖安装失败**，只能先卸载——侧载工具靠 Bundle ID 识别是不是同一个 App。
 
 ---
 
