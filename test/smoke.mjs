@@ -13,6 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const www = path.join(root, "www");
 
 const sourcesJson = fs.readFileSync(path.join(www, "sources.json"), "utf8");
+const firstSourceName = JSON.parse(sourcesJson).sources[0].name;
 
 const searchFixture = {
   code: 1,
@@ -54,6 +55,15 @@ window.fetch = async (url) => {
       json: async () => JSON.parse(sourcesJson),
     };
   }
+  if (String(url).includes("releases/latest")) {
+    const rel = { tag_name: "v2.1.0", html_url: "https://github.com/x/releases/tag/v2.1.0" };
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(rel),
+      json: async () => rel,
+    };
+  }
   return {
     ok: true,
     status: 200,
@@ -61,6 +71,35 @@ window.fetch = async (url) => {
     json: async () => searchFixture,
   };
 };
+
+// 预置一条观看记录，供「继续观看」测试（必须在 app.js 执行前写入）
+window.localStorage.setItem(
+  "libretv.history.v1",
+  JSON.stringify([
+    {
+      url: "https://cdn.example.com/h/1.m3u8",
+      title: "历史影片",
+      ep: "第03集",
+      from: "线路A",
+      pic: "",
+      time: 300,
+      duration: 1000,
+      updated: Date.now(),
+    },
+  ])
+);
+// 预置直播 m3u 缓存
+window.localStorage.setItem(
+  "libretv.live.m3u.v1",
+  [
+    "#EXTM3U",
+    '#EXTINF:-1 tvg-id="cctv1" group-title="央视频道",CCTV-1 综合',
+    "https://live.example.com/cctv1.m3u8",
+    '#EXTINF:-1 group-title="卫视频道",东方卫视',
+    "https://live.example.com/dongfang.m3u8",
+    "",
+  ].join("\n")
+);
 
 window.eval(fs.readFileSync(path.join(www, "app.js"), "utf8"));
 
@@ -79,22 +118,53 @@ const check = (name, cond, extra = "") => {
 console.log("启动与源加载");
 await tick();
 await tick();
+await tick();
 check("读取了 sources.json", fetchCalls.some((u) => u.includes("sources.json")));
-check("示例源已渲染", $("source-list").textContent.includes("示例源"));
+check(`收录源「${firstSourceName}」已渲染`, $("source-list").textContent.includes(firstSourceName));
 check("首页可见", $("view-home").hidden === false);
+check("检测到新版本提示条", $("update-banner").hidden === false && $("update-banner").textContent.includes("v2.1.0"), $("update-banner").textContent);
+
+console.log("继续观看");
+check("历史区块可见", $("history-section").hidden === false);
+check("历史卡片已渲染", $("history").querySelectorAll(".h-item").length === 1, `实际 ${$("history").querySelectorAll(".h-item").length}`);
+check("显示观看进度百分比", $("history").textContent.includes("看到第30%"), $("history").textContent);
+check("全屏按钮存在且可点", $("btn-fullscreen") !== null && $("btn-fullscreen").textContent.includes("横屏"));
+$("history").querySelector(".h-item").dispatchEvent(new window.Event("click", { bubbles: true }));
+await tick();
+check("从历史进入播放页", $("view-player").hidden === false);
+check("历史续播地址正确", $("video").getAttribute("src") === "https://cdn.example.com/h/1.m3u8", $("video").getAttribute("src"));
+check("历史标题正确", $("p-title").textContent.includes("历史影片"), $("p-title").textContent);
+
+console.log("直播");
+$("btn-live").dispatchEvent(new window.Event("click", { bubbles: true }));
+await tick();
+check("进入直播页", $("view-live").hidden === false);
+check("缓存列表解析出 2 个频道", $("live-status").textContent.includes("已解析 2 个频道"), $("live-status").textContent);
+check("频道列表渲染 2 项", $("live-list").querySelectorAll(".live-item").length === 2, `实际 ${$("live-list").querySelectorAll(".live-item").length}`);
+check("分组 chip 出现", $("live-groups").querySelectorAll(".chip").length === 2, `实际 ${$("live-groups").querySelectorAll(".chip").length}`);
+$("live-list").querySelector(".live-item").dispatchEvent(new window.Event("click", { bubbles: true }));
+await tick();
+check("进入直播播放", $("view-player").hidden === false);
+check("直播源地址正确", $("video").getAttribute("src") === "https://live.example.com/cctv1.m3u8", $("video").getAttribute("src"));
+check("直播频道名正确", $("p-title").textContent === "CCTV-1 综合", $("p-title").textContent);
+check("直播不生成剧集列表", $("p-episodes").querySelectorAll(".ep").length === 0);
+$("btn-back").dispatchEvent(new window.Event("click", { bubbles: true }));
+await tick();
+check("直播返回直播页", $("view-live").hidden === false);
 
 console.log("启用源");
 const sw = $("source-list").querySelector(".switch");
-check("初始为停用状态", !sw.classList.contains("on"));
+check("初始为启用状态", sw.classList.contains("on"));
 sw.dispatchEvent(new window.Event("click", { bubbles: true }));
 await tick();
-check("点击后变为启用", $("source-list").querySelector(".switch").classList.contains("on"));
+check("点击后变为停用", !$("source-list").querySelector(".switch").classList.contains("on"));
 
 console.log("搜索");
 $("q").value = "测试";
 $("search-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
 await tick();
 await tick();
+check("搜索时隐藏继续观看", $("history-section").hidden === true);
 check("发出搜索请求", fetchCalls.some((u) => u.includes("ac=videolist")));
 check("请求带 ac 与 wd 参数", fetchCalls.some((u) => u.includes("ac=videolist&wd=")));
 check("结果卡片渲染 2 条", $("results").querySelectorAll(".card").length >= 1, `实际 ${$("results").querySelectorAll(".card").length}`);

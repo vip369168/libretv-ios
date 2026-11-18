@@ -13,6 +13,7 @@
 <header id="topbar">
   <button id="btn-back" class="icon-btn" hidden aria-label="返回">‹</button>
   <div id="topbar-title">LibreTV</div>
+  <button id="btn-live" class="icon-btn" aria-label="直播">直播</button>
   <button id="btn-settings" class="icon-btn" aria-label="播放源">源</button>
 </header>
 
@@ -25,6 +26,16 @@
     </form>
 
     <div id="chips" class="chips"></div>
+
+    <div id="history-section" hidden>
+      <div class="h-head">
+        <h2 class="h2">继续观看</h2>
+        <button id="btn-clear-history" type="button" class="ghost-mini">清空</button>
+      </div>
+      <div id="history" class="history"></div>
+    </div>
+
+    <a id="update-banner" class="update-banner" hidden></a>
 
     <div id="home-hint" class="hint">输入关键词后，会同时在所有已启用的源里检索</div>
     <div id="results" class="grid"></div>
@@ -49,10 +60,25 @@
       <video id="video" controls playsinline webkit-playsinline preload="metadata"></video>
     </div>
     <div class="player-bar">
-      <div id="p-title" class="p-title"></div>
+      <div class="player-bar-row">
+        <div id="p-title" class="p-title"></div>
+        <button id="btn-fullscreen" type="button" class="btn-fs">⛶ 横屏</button>
+      </div>
       <div id="p-status" class="hint"></div>
     </div>
     <div id="p-episodes" class="episodes"></div>
+  </section>
+
+  <section id="view-live" hidden>
+    <h2 class="h2">直播源</h2>
+    <form id="live-form" class="stack">
+      <input id="live-url" type="url" inputmode="url" spellcheck="false"
+             placeholder="m3u 直播列表地址" />
+      <button type="submit">加载频道</button>
+    </form>
+    <div id="live-status" class="hint">支持 m3u / m3u8 播放列表。默认列表来自公开频道聚合，频道能否播放取决于来源。</div>
+    <div id="live-groups" class="chips"></div>
+    <div id="live-list" class="live-list"></div>
   </section>
 
   <section id="view-sources" hidden>

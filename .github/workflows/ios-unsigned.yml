@@ -12,6 +12,8 @@ jobs:
   build-ipa:
     runs-on: macos-26
     timeout-minutes: 45
+    permissions:
+      contents: write
 
     steps:
       - name: 检出代码
@@ -102,3 +104,21 @@ jobs:
           path: build/LibreTV-unsigned.ipa
           if-no-files-found: error
           retention-days: 30
+
+      - name: 发布 Release（App 内更新检测的数据源）
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          NOTES="未签名 IPA（v${VERSION}）。下载后需用 Sideloadly / AltStore 以自己的 Apple ID 重签名安装。"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" build/LibreTV-unsigned.ipa --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" build/LibreTV-unsigned.ipa \
+              --title "LibreTV ${TAG}" \
+              --notes "$NOTES" \
+              --repo "$GITHUB_REPOSITORY"
+          fi

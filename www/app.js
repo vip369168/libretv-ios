@@ -7,6 +7,13 @@
 
   var LS_SOURCES = 'libretv.sources.v1';
   var LS_PROGRESS = 'libretv.progress.v1';
+  var LS_HISTORY = 'libretv.history.v1';
+  var LS_LIVE_M3U = 'libretv.live.m3u.v1';
+  var LS_LIVE_URL = 'libretv.live.url.v1';
+
+  var APP_VERSION = '2.0';
+  var UPDATE_REPO = 'vip369168/libretv-ios';
+  var DEFAULT_LIVE_URL = 'https://iptv-org.github.io/iptv/countries/cn.m3u';
 
   var el = function (id) { return document.getElementById(id); };
 
@@ -18,7 +25,10 @@
     groups: [],
     groupIndex: 0,
     episode: null,
-    view: 'home'
+    view: 'home',
+    liveMode: false,
+    liveChannels: [],
+    liveGroup: ''
   };
 
   /* ---------- 原生桥 ---------- */
@@ -55,6 +65,26 @@
       .then(function (text) {
         try { return JSON.parse(text); } catch (e) { throw new Error('返回内容不是 JSON'); }
       });
+  }
+
+  function getText(url) {
+    var http = nativeHttp();
+    if (http) {
+      return http.get({
+        url: url,
+        headers: { 'Accept': '*/*' },
+        responseType: 'TEXT',
+        connectTimeout: 10000,
+        readTimeout: 20000
+      }).then(function (res) {
+        if (res.status >= 400) throw new Error('HTTP ' + res.status);
+        return typeof res.data === 'string' ? res.data : String(res.data);
+      });
+    }
+    return fetch(url).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.text();
+    });
   }
 
   /* ---------- 存储 ---------- */
@@ -111,19 +141,21 @@
 
   function show(view) {
     if (state.view === 'player' && view !== 'player') {
+      state.liveMode = false;
       var v = el('video');
       v.pause();
       v.removeAttribute('src');
       v.load();
     }
     state.view = view;
-    ['home', 'detail', 'player', 'sources'].forEach(function (name) {
+    ['home', 'detail', 'player', 'sources', 'live'].forEach(function (name) {
       el('view-' + name).hidden = (name !== view);
     });
     el('btn-back').hidden = (view === 'home');
+    el('btn-live').hidden = (view === 'live');
     el('btn-settings').textContent = (view === 'sources') ? '完成' : '源';
     el('topbar-title').textContent = {
-      home: 'LibreTV', detail: '详情', player: '播放', sources: '播放源'
+      home: 'LibreTV', detail: '详情', player: '播放', sources: '播放源', live: '直播'
     }[view];
     window.scrollTo(0, 0);
   }
@@ -131,6 +163,7 @@
   function goHome() {
     show('home');
     renderChips();
+    renderHistory();
   }
 
   /* ---------- 搜索 ---------- */
@@ -328,6 +361,105 @@
     writeStore(LS_PROGRESS, map);
   }
 
+  /* ---------- 观看记录（继续观看） ---------- */
+
+  function historyList() {
+    var list = readStore(LS_HISTORY, []);
+    return Array.isArray(list) ? list : [];
+  }
+
+  function upsertHistory(rec) {
+    if (!rec || !rec.url) return;
+    var list = historyList().filter(function (r) { return r.url !== rec.url; });
+    list.unshift(rec);
+    if (list.length > 30) list = list.slice(0, 30);
+    writeStore(LS_HISTORY, list);
+    renderHistory();
+  }
+
+  function recordFor(ep, time, duration) {
+    var d = state.detail || {};
+    var group = state.groups[state.groupIndex] || {};
+    return {
+      url: ep.url,
+      title: d.name || ep.name,
+      ep: ep.name,
+      from: group.from || '',
+      pic: d.pic || '',
+      time: Math.floor(time || 0),
+      duration: Math.floor(duration || 0),
+      updated: Date.now()
+    };
+  }
+
+  function renderHistory() {
+    var box = el('history');
+    var sec = el('history-section');
+    if (!box || !sec) return;
+    var list = historyList();
+    if (!list.length) { sec.hidden = true; box.innerHTML = ''; return; }
+    sec.hidden = false;
+    box.innerHTML = '';
+    list.slice(0, 12).forEach(function (r) {
+      var item = document.createElement('div');
+      item.className = 'h-item';
+
+      var img = document.createElement('img');
+      img.loading = 'lazy';
+      img.alt = r.title;
+      img.src = r.pic || BLANK_POSTER;
+      img.addEventListener('error', function () { img.src = BLANK_POSTER; });
+
+      var info = document.createElement('div');
+      info.className = 'h-info';
+
+      var t = document.createElement('div');
+      t.className = 'h-title';
+      t.textContent = r.title;
+
+      var e = document.createElement('div');
+      e.className = 'h-ep';
+      var pct = (r.duration > 0 && r.time > 0)
+        ? Math.min(100, Math.round(r.time / r.duration * 100))
+        : 0;
+      e.textContent = r.ep + (r.from ? ' · ' + r.from : '')
+        + (pct > 0 ? ' · 看到第' + pct + '%' : '');
+
+      var track = document.createElement('div');
+      track.className = 'h-track';
+      var fill = document.createElement('div');
+      fill.className = 'h-fill';
+      fill.style.width = pct + '%';
+      track.appendChild(fill);
+
+      info.appendChild(t);
+      info.appendChild(e);
+      info.appendChild(track);
+      item.appendChild(img);
+      item.appendChild(info);
+
+      item.addEventListener('click', function () { resumeRecord(r); });
+      box.appendChild(item);
+    });
+  }
+
+  function resumeRecord(r) {
+    state.detail = { name: r.title, pic: r.pic, sourceName: '', raw: {} };
+    state.groups = [{
+      from: r.from || '继续观看',
+      episodes: [{ name: r.ep || '播放', url: r.url }]
+    }];
+    state.groupIndex = 0;
+    playEpisode(state.groups[0].episodes[0]);
+  }
+
+  function clearHistory() {
+    writeStore(LS_HISTORY, []);
+    writeStore(LS_PROGRESS, {});
+    renderHistory();
+    toast('观看记录已清空');
+  }
+
   function playEpisode(ep) {
     var group = state.groups[state.groupIndex];
     state.episode = ep;
@@ -352,6 +484,7 @@
     };
     v.addEventListener('loadedmetadata', onMeta);
 
+    upsertHistory(recordFor(ep, saved || 0, 0));
     renderPlayerEpisodes();
   }
 
@@ -462,6 +595,155 @@
     });
   }
 
+  /* ---------- 直播 ---------- */
+
+  function parseM3U(text) {
+    var lines = String(text).split(/\r?\n/);
+    var out = [];
+    var pending = null;
+    lines.forEach(function (line) {
+      line = line.trim();
+      if (!line) return;
+      if (/^#EXTINF/i.test(line)) {
+        var name = line.split(',').pop().trim();
+        var g = (line.match(/group-title="([^"]*)"/i) || [])[1] || '';
+        pending = { name: name || '未命名频道', group: g.trim() || '其他', url: '' };
+      } else if (line.charAt(0) !== '#') {
+        if (pending && /^https?:\/\//i.test(line)) {
+          pending.url = line;
+          out.push(pending);
+        }
+        pending = null;
+      }
+    });
+    return out.filter(function (c) { return c.url; });
+  }
+
+  function loadLive(url, useCache) {
+    var status = el('live-status');
+    if (!useCache) {
+      status.textContent = '正在加载频道列表…';
+      writeStore(LS_LIVE_URL, url);
+    }
+    var done = function (text) {
+      if (!useCache) {
+        try { localStorage.setItem(LS_LIVE_M3U, String(text)); } catch (e) { /* 忽略 */ }
+      }
+      state.liveChannels = parseM3U(text);
+      state.liveGroup = '';
+      el('live-url').value = url;
+      if (!state.liveChannels.length) {
+        status.textContent = '这个列表里没有解析到频道。确认地址指向 m3u/m3u8 播放列表。';
+      } else {
+        status.textContent = '已解析 ' + state.liveChannels.length + ' 个频道';
+      }
+      renderLive();
+    };
+    if (useCache) {
+      var cached = '';
+      try { cached = localStorage.getItem(LS_LIVE_M3U) || ''; } catch (e) { cached = ''; }
+      if (cached) { done(cached); return; }
+    }
+    getText(url).then(done, function (err) {
+      status.textContent = '加载失败：' + (err && err.message ? err.message : '网络错误')
+        + '。直播源不稳定是常态，可以换一个列表地址。';
+      renderLive();
+    });
+  }
+
+  function renderLive() {
+    var box = el('live-list');
+    box.innerHTML = '';
+    var chips = el('live-groups');
+    chips.innerHTML = '';
+
+    var groups = {};
+    state.liveChannels.forEach(function (c) {
+      (groups[c.group] = groups[c.group] || []).push(c);
+    });
+    var names = Object.keys(groups).sort();
+    if (names.length > 1) {
+      names.forEach(function (n) {
+        var chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip' + (state.liveGroup === n ? ' on' : '');
+        chip.textContent = n;
+        chip.addEventListener('click', function () {
+          state.liveGroup = (state.liveGroup === n) ? '' : n;
+          renderLive();
+        });
+        chips.appendChild(chip);
+      });
+    }
+
+    var pool = state.liveGroup
+      ? (groups[state.liveGroup] || [])
+      : state.liveChannels;
+    pool.forEach(function (c) {
+      var item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'live-item';
+      item.textContent = c.name;
+      item.addEventListener('click', function () { playLive(c); });
+      box.appendChild(item);
+    });
+  }
+
+  function playLive(ch) {
+    state.liveMode = true;
+    state.detail = { name: ch.name, pic: '', sourceName: '' };
+    state.episode = { name: ch.name, url: ch.url };
+    state.groups = [];
+    state.groupIndex = 0;
+
+    var v = el('video');
+    el('p-title').textContent = ch.name;
+    el('p-status').textContent = '直播频道，不支持进度记忆';
+    el('p-episodes').innerHTML = '';
+
+    show('player');
+    v.src = ch.url;
+    v.load();
+    var p = v.play();
+    if (p && p.catch) p.catch(function () { /* 等待用户手势 */ });
+  }
+
+  /* ---------- 自动更新 ---------- */
+
+  function isNewerTag(tag, current) {
+    var a = String(tag).replace(/^v/i, '').split('.').map(function (n) { return parseInt(n, 10) || 0; });
+    var b = String(current).split('.').map(function (n) { return parseInt(n, 10) || 0; });
+    for (var i = 0; i < Math.max(a.length, b.length); i++) {
+      var x = a[i] || 0, y = b[i] || 0;
+      if (x !== y) return x > y;
+    }
+    return false;
+  }
+
+  function openExternal(url) {
+    var cap = window.Capacitor;
+    var browser = cap && cap.Plugins && cap.Plugins.Browser;
+    if (browser && typeof browser.open === 'function') {
+      browser.open({ url: url });
+      return;
+    }
+    try { window.open(url, '_blank'); } catch (e) { /* 环境不支持 */ }
+  }
+
+  function checkUpdate() {
+    getJson('https://api.github.com/repos/' + UPDATE_REPO + '/releases/latest')
+      .then(function (rel) {
+        var tag = String(rel.tag_name || '').trim();
+        if (!tag || !isNewerTag(tag, APP_VERSION)) return;
+        var banner = el('update-banner');
+        banner.textContent = '发现新版本 ' + tag
+          + '（当前 v' + APP_VERSION + '），点此获取新安装包';
+        banner.hidden = false;
+        banner.onclick = function () { openExternal(rel.html_url); };
+      })
+      .catch(function () { /* 静默失败：离线或接口不可达 */ });
+  }
+
   /* ---------- 事件 ---------- */
 
   function bind() {
@@ -470,7 +752,34 @@
       var kw = el('q').value.trim();
       if (!kw) { toast('先输入关键词'); return; }
       if (state.view !== 'home') show('home');
+      el('history-section').hidden = true;
       runSearch(kw);
+    });
+
+    el('btn-fullscreen').addEventListener('click', function () {
+      var v2 = el('video');
+      if (typeof v2.webkitEnterFullscreen === 'function') {
+        v2.webkitEnterFullscreen();
+        return;
+      }
+      if (v2.requestFullscreen) { v2.requestFullscreen(); return; }
+      if (v2.webkitRequestFullscreen) { v2.webkitRequestFullscreen(); return; }
+      toast('当前环境不支持全屏');
+    });
+
+    el('btn-clear-history').addEventListener('click', clearHistory);
+
+    el('btn-live').addEventListener('click', function () {
+      el('live-url').value = readStore(LS_LIVE_URL, '') || DEFAULT_LIVE_URL;
+      loadLive(readStore(LS_LIVE_URL, '') || DEFAULT_LIVE_URL, true);
+      show('live');
+    });
+
+    el('live-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var url = el('live-url').value.trim();
+      if (!/^https?:\/\//i.test(url)) { toast('直播列表地址要以 http:// 或 https:// 开头'); return; }
+      loadLive(url, false);
     });
 
     el('btn-settings').addEventListener('click', function () {
@@ -483,7 +792,11 @@
     });
 
     el('btn-back').addEventListener('click', function () {
-      if (state.view === 'player') { show('detail'); return; }
+      if (state.view === 'player') {
+        if (state.liveMode) { show('live'); return; }
+        show('detail');
+        return;
+      }
       if (state.view === 'detail') { goHome(); return; }
       goHome();
     });
@@ -533,15 +846,29 @@
     var v = el('video');
     var lastSave = 0;
     v.addEventListener('timeupdate', function () {
+      if (state.liveMode) return;
       var now = Date.now();
       if (now - lastSave < 5000) return;
       lastSave = now;
-      if (state.episode && v.currentTime > 0) saveProgress(state.episode.url, v.currentTime);
+      if (state.episode && v.currentTime > 0) {
+        saveProgress(state.episode.url, v.currentTime);
+        upsertHistory(recordFor(
+          state.episode,
+          v.currentTime,
+          isFinite(v.duration) ? v.duration : 0
+        ));
+      }
+    });
+    v.addEventListener('webkitpresentationmodechanged', function () {
+      var mode = v.webkitPresentationMode || '';
+      el('btn-fullscreen').textContent =
+        mode === 'fullscreen' ? '⛶ 退出全屏' : '⛶ 横屏';
     });
     v.addEventListener('error', function () {
       el('p-status').textContent = '这条线路播放失败，可能是防盗链或链接已失效，换一条线路试试。';
     });
     v.addEventListener('ended', function () {
+      if (state.liveMode) return;
       if (state.episode) saveProgress(state.episode.url, 0);
     });
   }
@@ -553,7 +880,9 @@
     loadSources().then(function () {
       renderChips();
       renderSources();
+      renderHistory();
       show('home');
+      checkUpdate();
     });
   }
 
