@@ -5,13 +5,13 @@
 (function () {
   'use strict';
 
-  var LS_SOURCES = 'libretv.sources.v1';
+  var LS_SOURCES = 'libretv.sources.v2';
   var LS_PROGRESS = 'libretv.progress.v1';
   var LS_HISTORY = 'libretv.history.v1';
   var LS_LIVE_M3U = 'libretv.live.m3u.v1';
   var LS_LIVE_URL = 'libretv.live.url.v1';
 
-  var APP_VERSION = '2.2';
+  var APP_VERSION = '2.2.1';
   var UPDATE_REPO = 'vip369168/libretv-ios';
   var DEFAULT_LIVE_URL = 'https://iptv-org.github.io/iptv/countries/cn.m3u';
 

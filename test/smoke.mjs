@@ -209,7 +209,7 @@ $("s-api").value = "https://my.example.com/api.php/provide/vod/";
 $("source-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
 await tick();
 check("新增后出现在列表", $("source-list").textContent.includes("本地源"));
-check("写入 localStorage", (window.localStorage.getItem("libretv.sources.v1") || "").includes("本地源"));
+check("写入 localStorage", (window.localStorage.getItem("libretv.sources.v2") || "").includes("本地源"));
 
 console.log("");
 if (fails.length) {
