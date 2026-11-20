@@ -11,7 +11,7 @@
   var LS_LIVE_M3U = 'libretv.live.m3u.v1';
   var LS_LIVE_URL = 'libretv.live.url.v1';
 
-  var APP_VERSION = '2.1';
+  var APP_VERSION = '2.2';
   var UPDATE_REPO = 'vip369168/libretv-ios';
   var DEFAULT_LIVE_URL = 'https://iptv-org.github.io/iptv/countries/cn.m3u';
 
@@ -28,7 +28,8 @@
     view: 'home',
     liveMode: false,
     liveChannels: [],
-    liveGroup: ''
+    liveGroup: '',
+    latest: []
   };
 
   /* ---------- 原生桥 ---------- */
@@ -164,6 +165,7 @@
     show('home');
     renderChips();
     renderHistory();
+    renderLatest();
   }
 
   /* ---------- 搜索 ---------- */
@@ -176,23 +178,28 @@
     return api.replace(/\/+$/, '') + '/?ac=videolist&wd=' + encodeURIComponent(keyword) + '&pg=1';
   }
 
+  function mapItem(src, it) {
+    return {
+      sourceId: src.id,
+      sourceName: src.name,
+      id: String(it.vod_id == null ? '' : it.vod_id),
+      name: String(it.vod_name || '').trim(),
+      pic: it.vod_pic || '',
+      remarks: it.vod_remarks || '',
+      year: it.vod_year || '',
+      area: it.vod_area || '',
+      type: it.vod_type_name || it.vod_class || '',
+      time: String(it.vod_time || ''),
+      raw: it
+    };
+  }
+
   function searchOne(src, keyword) {
     return getJson(sourceUrl(src.api, keyword)).then(function (data) {
       var list = (data && (data.list || data.data)) || [];
       if (!Array.isArray(list)) return [];
       return list.map(function (it) {
-        return {
-          sourceId: src.id,
-          sourceName: src.name,
-          id: String(it.vod_id == null ? '' : it.vod_id),
-          name: String(it.vod_name || '').trim(),
-          pic: it.vod_pic || '',
-          remarks: it.vod_remarks || '',
-          year: it.vod_year || '',
-          area: it.vod_area || '',
-          type: it.vod_type_name || it.vod_class || '',
-          raw: it
-        };
+        return mapItem(src, it);
       }).filter(function (x) { return x.name; });
     });
   }
@@ -270,6 +277,97 @@
       card.addEventListener('click', function () { openDetail(item); });
       box.appendChild(card);
     });
+  }
+
+  /* ---------- 最近上新（电视剧） ---------- */
+
+  function isTvType(t) {
+    return /剧/.test(String(t || ''));
+  }
+
+  function latestUrl(api) {
+    return api.replace(/\/+$/, '') + '/?ac=videolist&pg=1';
+  }
+
+  function fetchLatest() {
+    var pool = enabledSources();
+    if (!pool.length) { el('latest-section').hidden = true; return; }
+    Promise.all(pool.map(function (src) {
+      return getJson(latestUrl(src.api)).then(
+        function (data) {
+          var list = (data && (data.list || data.data)) || [];
+          if (!Array.isArray(list)) return [];
+          return list.map(function (it) { return mapItem(src, it); })
+            .filter(function (x) { return x.name && isTvType(x.type); });
+        },
+        function () { return []; }
+      );
+    })).then(function (batches) {
+      var seen = {};
+      var merged = [];
+      batches.forEach(function (items) {
+        items.forEach(function (x) {
+          if (seen[x.name]) return;
+          seen[x.name] = 1;
+          merged.push(x);
+        });
+      });
+      state.latest = merged.slice(0, 24);
+      renderLatest();
+    });
+  }
+
+  function renderLatest() {
+    var sec = el('latest-section');
+    var box = el('latest');
+    if (!state.latest || !state.latest.length) { sec.hidden = true; return; }
+    sec.hidden = false;
+    box.innerHTML = '';
+    state.latest.forEach(function (item) {
+      var card = document.createElement('div');
+      card.className = 'l-card';
+
+      var img = document.createElement('img');
+      img.loading = 'lazy';
+      img.alt = item.name;
+      img.src = item.pic || BLANK_POSTER;
+      img.addEventListener('error', function () { img.src = BLANK_POSTER; });
+
+      var name = document.createElement('div');
+      name.className = 'l-name';
+      name.textContent = item.name;
+
+      var sub = document.createElement('div');
+      sub.className = 'l-sub';
+      sub.textContent = [item.remarks, item.sourceName].filter(Boolean).join(' · ');
+
+      card.appendChild(img);
+      card.appendChild(name);
+      card.appendChild(sub);
+      if (item.remarks) {
+        var b = document.createElement('div');
+        b.className = 'badge';
+        b.textContent = item.remarks;
+        card.appendChild(b);
+      }
+
+      card.addEventListener('click', function () { openLatest(item); });
+      box.appendChild(card);
+    });
+  }
+
+  function openLatest(item) {
+    var src = null;
+    state.sources.forEach(function (s) { if (s.id === item.sourceId) src = s; });
+    if (!src || !item.id) { openDetail(item); return; }
+    toast('正在获取剧集详情…', 1200);
+    getJson(src.api.replace(/\/+$/, '') + '/?ac=detail&ids=' + encodeURIComponent(item.id))
+      .then(function (data) {
+        var list = (data && (data.list || data.data)) || [];
+        var d = Array.isArray(list) ? list[0] : null;
+        openDetail(d && d.vod_id != null ? mapItem(src, d) : item);
+      })
+      .catch(function () { openDetail(item); });
   }
 
   /* ---------- 详情 ---------- */
@@ -753,6 +851,7 @@
       if (!kw) { toast('先输入关键词'); return; }
       if (state.view !== 'home') show('home');
       el('history-section').hidden = true;
+      el('latest-section').hidden = true;
       runSearch(kw);
     });
 
@@ -768,6 +867,11 @@
     });
 
     el('btn-clear-history').addEventListener('click', clearHistory);
+
+    el('btn-refresh-latest').addEventListener('click', function () {
+      toast('正在刷新上新列表…', 1400);
+      fetchLatest();
+    });
 
     el('btn-live').addEventListener('click', function () {
       el('live-url').value = readStore(LS_LIVE_URL, '') || DEFAULT_LIVE_URL;
@@ -882,6 +986,7 @@
       renderSources();
       renderHistory();
       show('home');
+      fetchLatest();
       checkUpdate();
     });
   }

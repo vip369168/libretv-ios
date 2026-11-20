@@ -344,3 +344,56 @@ section { animation: fade 0.18s ease-out; }
   z-index: 60;
   text-align: center;
 }
+
+/* ---------- 最近上新（横向滑动） ---------- */
+.latest-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 2px 8px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.latest-row:empty { display: none; }
+.l-card {
+  flex: 0 0 106px;
+  scroll-snap-align: start;
+  position: relative;
+  cursor: pointer;
+}
+.l-card img {
+  width: 106px;
+  height: 159px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: var(--surface-2);
+  display: block;
+}
+.l-name {
+  margin-top: 6px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.l-sub {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.l-card .badge {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  max-width: calc(100% - 10px);
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.66);
+  color: #dfe8f5;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

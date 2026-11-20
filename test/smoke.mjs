@@ -56,7 +56,7 @@ window.fetch = async (url) => {
     };
   }
   if (String(url).includes("releases/latest")) {
-    const rel = { tag_name: "v2.1.0", html_url: "https://github.com/x/releases/tag/v2.1.0" };
+    const rel = { tag_name: "v2.3.0", html_url: "https://github.com/x/releases/tag/v2.3.0" };
     return {
       ok: true,
       status: 200,
@@ -122,7 +122,16 @@ await tick();
 check("读取了 sources.json", fetchCalls.some((u) => u.includes("sources.json")));
 check(`收录源「${firstSourceName}」已渲染`, $("source-list").textContent.includes(firstSourceName));
 check("首页可见", $("view-home").hidden === false);
-check("检测到新版本提示条", $("update-banner").hidden === false && $("update-banner").textContent.includes("v2.1.0"), $("update-banner").textContent);
+check("检测到新版本提示条", $("update-banner").hidden === false && $("update-banner").textContent.includes("v2.3.0"), $("update-banner").textContent);
+
+console.log("最近上新");
+check("上新区块可见", $("latest-section").hidden === false);
+check("上新卡片渲染 1 张（剧集类型过滤后）", $("latest").querySelectorAll(".l-card").length === 1, `实际 ${$("latest").querySelectorAll(".l-card").length}`);
+check("上新卡片显示备注与来源", $("latest").textContent.includes("更新至 12 集"));
+$("latest").querySelector(".l-card").dispatchEvent(new window.Event("click", { bubbles: true }));
+await tick();
+check("发出详情请求 ac=detail", fetchCalls.some((u) => u.includes("ac=detail&ids=")), fetchCalls.filter((u) => u.includes("ac=detail")).join(","));
+check("点击上新卡片进入详情页", $("view-detail").hidden === false);
 
 console.log("继续观看");
 check("历史区块可见", $("history-section").hidden === false);
