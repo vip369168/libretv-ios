@@ -203,6 +203,31 @@ check("进入播放页", $("view-player").hidden === false);
 check("video src 已设置", $("video").getAttribute("src") === "https://cdn.example.com/a/full.mp4", $("video").getAttribute("src"));
 check("播放标题含片名", $("p-title").textContent.includes("测试影片甲"));
 
+console.log("自动连播");
+check("连播开关按钮存在且默认开启", $("btn-autonext") !== null && $("btn-autonext").textContent.includes("开"), $("btn-autonext") && $("btn-autonext").textContent);
+// 返回详情页切回 m3u8 线路，播第 1 集验证播完自动跳第 2 集
+$("btn-back").dispatchEvent(new window.Event("click", { bubbles: true }));
+await tick();
+$("d-tabs").querySelectorAll(".chip")[0].dispatchEvent(new window.Event("click", { bubbles: true }));
+await tick();
+const epsAuto = $("d-episodes").querySelectorAll(".ep");
+check("m3u8 线路 2 集", epsAuto.length === 2, `实际 ${epsAuto.length}`);
+epsAuto[0].dispatchEvent(new window.Event("click", { bubbles: true }));
+await tick();
+check("正在播放第 1 集", $("video").getAttribute("src") === "https://cdn.example.com/a/1.m3u8", $("video").getAttribute("src"));
+$("video").dispatchEvent(new window.Event("ended", { bubbles: true }));
+await tick();
+check("播完自动跳到第 2 集", $("video").getAttribute("src") === "https://cdn.example.com/a/2.m3u8", $("video").getAttribute("src"));
+check("第 2 集按钮高亮", $("p-episodes").querySelectorAll(".ep")[1].classList.contains("on"));
+// 关闭连播后再触发 ended，不应切换（第 2 集是最后一集）
+$("btn-autonext").dispatchEvent(new window.Event("click", { bubbles: true }));
+await tick();
+check("连播开关显示为关", $("btn-autonext").textContent.includes("关"), $("btn-autonext").textContent);
+$("video").dispatchEvent(new window.Event("ended", { bubbles: true }));
+await tick();
+check("连播关闭时不自动切换", $("video").getAttribute("src") === "https://cdn.example.com/a/2.m3u8", $("video").getAttribute("src"));
+check("连播偏好已写入 localStorage", window.localStorage.getItem("libretv.autoplay.v1") === "false", window.localStorage.getItem("libretv.autoplay.v1"));
+
 console.log("源管理");
 $("s-name").value = "本地源";
 $("s-api").value = "https://my.example.com/api.php/provide/vod/";

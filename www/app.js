@@ -10,8 +10,9 @@
   var LS_HISTORY = 'libretv.history.v1';
   var LS_LIVE_M3U = 'libretv.live.m3u.v1';
   var LS_LIVE_URL = 'libretv.live.url.v1';
+  var LS_AUTOPLAY = 'libretv.autoplay.v1';
 
-  var APP_VERSION = '2.2.1';
+  var APP_VERSION = '2.2.2';
   var UPDATE_REPO = 'vip369168/libretv-ios';
   var DEFAULT_LIVE_URL = 'https://iptv-org.github.io/iptv/countries/cn.m3u';
 
@@ -558,6 +559,28 @@
     toast('观看记录已清空');
   }
 
+  /* ---------- 自动连播 ---------- */
+
+  function autoNextEnabled() {
+    return readStore(LS_AUTOPLAY, true) !== false;
+  }
+
+  function updateAutoNextBtn() {
+    var b = el('btn-autonext');
+    if (b) b.textContent = '连播：' + (autoNextEnabled() ? '开' : '关');
+  }
+
+  function nextEpisodeInGroup() {
+    var group = state.groups[state.groupIndex];
+    if (!group || !state.episode) return null;
+    var idx = -1;
+    for (var i = 0; i < group.episodes.length; i++) {
+      if (group.episodes[i].url === state.episode.url) { idx = i; break; }
+    }
+    if (idx < 0 || idx + 1 >= group.episodes.length) return null;
+    return group.episodes[idx + 1];
+  }
+
   function playEpisode(ep) {
     var group = state.groups[state.groupIndex];
     state.episode = ep;
@@ -584,6 +607,7 @@
 
     upsertHistory(recordFor(ep, saved || 0, 0));
     renderPlayerEpisodes();
+    updateAutoNextBtn();
   }
 
   function renderPlayerEpisodes() {
@@ -866,6 +890,13 @@
       toast('当前环境不支持全屏');
     });
 
+    el('btn-autonext').addEventListener('click', function () {
+      var on = !autoNextEnabled();
+      writeStore(LS_AUTOPLAY, on);
+      updateAutoNextBtn();
+      toast(on ? '自动连播已开启' : '自动连播已关闭', 1600);
+    });
+
     el('btn-clear-history').addEventListener('click', clearHistory);
 
     el('btn-refresh-latest').addEventListener('click', function () {
@@ -974,6 +1005,14 @@
     v.addEventListener('ended', function () {
       if (state.liveMode) return;
       if (state.episode) saveProgress(state.episode.url, 0);
+      if (!autoNextEnabled()) return;
+      var next = nextEpisodeInGroup();
+      if (next) {
+        toast('本集播完，自动播放：' + next.name, 2000);
+        playEpisode(next);
+      } else {
+        toast('已经是最后一集了', 1600);
+      }
     });
   }
 
